@@ -2,9 +2,7 @@
 // This code is heavily based on
 // https://github.com/rustwasm/wasm-bindgen/blob/906fa91cb834e59f75b0bfa72e4b49e55f51c9de/crates/cli-support/src/multivalue.rs
 
-use std::env;
-use std::fs;
-use std::process;
+use std::{env, fs, process};
 
 use walrus::{ExportId, ExportItem, FunctionId, Module, ValType};
 
@@ -78,8 +76,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         process::exit(1);
     }
     let (input_path, transformations) = parse_args(&args[1..]);
-    dbg!(&input_path);
-    println!("{:?}", transformations);
 
     let wasm = wit_text::parse_file(&input_path)
         .expect(&format!("input file `{}` can be read", input_path));
@@ -92,22 +88,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // include shared memory, so it fails that part of
         // validation!
         .strict_validate(false)
-        //.generate_dwarf(true)
-        //.generate_name_section(true)
-        //.generate_producers_section(true)
         .on_parse(wit_walrus::on_parse)
         .parse(&wasm)
         .expect("failed to parse input file as wasm");
 
     let shadow_stack_pointer = wasm_bindgen_wasm_conventions::get_shadow_stack_pointer(&module)
         .expect("cannot get shadow stack pointer");
-    dbg!(&shadow_stack_pointer);
     let memory = wasm_bindgen_wasm_conventions::get_memory(&module).expect("cannot get memory");
-    dbg!(&module.exports);
 
     let to_xform: Vec<(FunctionId, usize, Vec<ValType>)> = transformations
         .iter()
         .map(|(function_name, result_types)| {
+            println!(
+                "Make `{}` function return `{:?}`.",
+                function_name, result_types
+            );
             let (_export_id, function_id) = get_ids_by_name(&module, function_name);
             (function_id, 0, result_types.to_vec())
         })
@@ -120,8 +115,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .collect();
 
-    dbg!(&to_xform);
-
     let wrappers = wasm_bindgen_multi_value_xform::run(
         &mut module,
         memory,
@@ -129,7 +122,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &to_xform[..],
     )
     .expect("cannot create multi-value wrapper");
-    dbg!(&wrappers);
 
     for (export_id, id) in export_ids.into_iter().zip(wrappers) {
         let mut_export = module.exports.get_mut(export_id);
