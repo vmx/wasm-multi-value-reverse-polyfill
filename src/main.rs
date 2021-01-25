@@ -2,16 +2,67 @@
 // This code is heavily based on
 // https://github.com/rustwasm/wasm-bindgen/blob/906fa91cb834e59f75b0bfa72e4b49e55f51c9de/crates/cli-support/src/multivalue.rs
 
+use std::env;
 use std::fs;
+use std::process;
 
 use walrus::{ExportItem, ValType};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Hello, world!");
+/// The input parameters are expected to be a list of parameters, each of them having the form:
+///
+///     function_name return_value_type_1 return_value_type_2 return_value_type_n
+///
+/// Each separate by whitespace.
+fn parse_args(args: &[String]) -> (String, Vec<(String, Vec<ValType>)>) {
+    let input_path = args[0].to_string();
+    let transformations = args
+        .iter()
+        .skip(1)
+        .map(|raw_input| {
+            let mut input_split: Vec<&str> = raw_input.split_whitespace().collect();
+            let function_name = input_split.remove(0).to_string();
+            let val_types: Vec<ValType> = input_split
+                .iter()
+                .map(|raw_type| match *raw_type {
+                    "i32" => ValType::I32,
+                    "i64" => ValType::I64,
+                    "f32" => ValType::F32,
+                    "f64" => ValType::F64,
+                    _ => panic!(
+                        "unnkown return type `{}`. It must be one of i32 |  i64 | f32 | f64.",
+                        raw_type
+                    ),
+                })
+                .collect();
+            if val_types.len() < 2 {
+                panic!(
+                    "there must be at least two return types for function `{}`, \
+                else it's not a multi-value return",
+                    function_name
+                );
+            }
+            (function_name, val_types)
+        })
+        .collect();
+    (input_path, transformations)
+}
 
-    let path = "/home/vmx/src/rust/misc/wasmbug/issue_73755.wasm";
-    let wasm = wit_text::parse_file(&path).expect(&format!("input file `{}` can be read", path));
-    wit_validator::validate(&wasm).expect(&format!("failed to validate `{}`", path));
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<String> = env::args().skip(1).collect();
+    if args.len() < 2 {
+        println!(
+            "Usage: {} wasm-file 'function1 i32 i32' 'function2 f32 f64'",
+            args[0]
+        );
+        process::exit(1);
+    }
+    let (input_path, transformations) = parse_args(&args[1..]);
+    dbg!(&input_path);
+    println!("{:?}", transformations);
+
+    let wasm = wit_text::parse_file(&input_path)
+        .expect(&format!("input file `{}` can be read", input_path));
+    wit_validator::validate(&wasm).expect(&format!("failed to validate `{}`", input_path));
     let mut module = walrus::ModuleConfig::new()
         // Skip validation of the module as LLVM's output is
         // generally already well-formed and so we won't gain much
@@ -77,9 +128,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             slot.item = id.into();
         }
 
-        let wasm_bytes = module.emit_wasm();
-        let wasm_path = "/home/vmx/src/rust/misc/wasmbug/issue_73755.multivalue.wasm";
-        fs::write(&wasm_path, wasm_bytes).expect(&format!("failed to write `{}`", wasm_path));
+        let output_bytes = module.emit_wasm();
+        let output_path = [&input_path, ".multivalue.wasm"].concat();
+        fs::write(&output_path, output_bytes).expect(&format!("failed to write `{}`", output_path));
     }
     Ok(())
 }
