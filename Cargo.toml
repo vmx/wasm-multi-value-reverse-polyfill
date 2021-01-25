@@ -1,0 +1,15 @@
+[package]
+name = "multi-value-reverse-polyfill"
+version = "0.1.0"
+authors = ["Volker Mische <volker.mische@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+walrus = "0.18.0"
+wasm-bindgen-multi-value-xform = "0.2.69"
+wasm-bindgen-wasm-conventions = "0.2.69"
+wit-text = "0.8.0"
+wit-validator = "0.2.1"
+wit-walrus = "0.5.0"
