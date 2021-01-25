@@ -6,8 +6,12 @@ use std::env;
 use std::fs;
 use std::process;
 
-use walrus::{ExportItem, ValType};
+use walrus::{ExportId, ExportItem, FunctionId, Module, ValType};
 
+/// Returns the input path and the transformations.
+///
+/// The transformations are a list with a tuple containing the function name and the return types.
+///
 /// The input parameters are expected to be a list of parameters, each of them having the form:
 ///
 ///     function_name return_value_type_1 return_value_type_2 return_value_type_n
@@ -47,9 +51,26 @@ fn parse_args(args: &[String]) -> (String, Vec<(String, Vec<ValType>)>) {
     (input_path, transformations)
 }
 
+/// Returns the export and function IDs.
+fn get_ids_by_name(module: &Module, function_name: &str) -> (ExportId, FunctionId) {
+    let export = module
+        .exports
+        .iter()
+        .find(|&exp| exp.name == function_name)
+        .expect(&format!(
+            "cannot find function with name `{}`",
+            function_name
+        ));
+
+    match export.item {
+        ExportItem::Function(function_id) => (export.id(), function_id),
+        _ => panic!("item is not a function"),
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().skip(1).collect();
-    if args.len() < 2 {
+    let args: Vec<String> = env::args().collect();
+    if args.len() < 3 {
         println!(
             "Usage: {} wasm-file 'function1 i32 i32' 'function2 f32 f64'",
             args[0]
@@ -84,53 +105,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let memory = wasm_bindgen_wasm_conventions::get_memory(&module).expect("cannot get memory");
     dbg!(&module.exports);
 
-    //for export in module.exports.iter() {
-    //    dbg!(export);
-    //}
-    let function_name = "test2";
-    let export = {
-        module
-            .exports
-            .iter()
-            .find(|&exp| exp.name == function_name)
-            .expect(&format!(
-                "cannot find function with name `{}`",
-                function_name
-            ))
-        //dbg!(&export.item);
-    };
+    let to_xform: Vec<(FunctionId, usize, Vec<ValType>)> = transformations
+        .iter()
+        .map(|(function_name, result_types)| {
+            let (_export_id, function_id) = get_ids_by_name(&module, function_name);
+            (function_id, 0, result_types.to_vec())
+        })
+        .collect();
+    let export_ids: Vec<ExportId> = transformations
+        .iter()
+        .map(|(function_name, _)| {
+            let (export_id, _function_id) = get_ids_by_name(&module, function_name);
+            export_id
+        })
+        .collect();
 
-    let export_id = export.id();
+    dbg!(&to_xform);
 
-    if let ExportItem::Function(function) = export.item {
-        let result_types = vec![ValType::I32, ValType::I32];
-        dbg!(&result_types);
+    let wrappers = wasm_bindgen_multi_value_xform::run(
+        &mut module,
+        memory,
+        shadow_stack_pointer,
+        &to_xform[..],
+    )
+    .expect("cannot create multi-value wrapper");
+    dbg!(&wrappers);
 
-        let to_xform = vec![(function, 0, result_types)];
-        dbg!(&to_xform);
-
-        //to_xform: &[(walrus::FunctionId, usize, Vec<walrus::ValType>)],
-
-        let wrappers = wasm_bindgen_multi_value_xform::run(
-            &mut module,
-            memory,
-            shadow_stack_pointer,
-            &to_xform[..],
-        )
-        .expect("cannot create multi-value wrapper");
-        dbg!(&wrappers);
-
-        //let mut mut_export = module.exports.get_mut(export_id);
-        //mut_export.item = wrappers[0].into();
+    for (export_id, id) in export_ids.into_iter().zip(wrappers) {
         let mut_export = module.exports.get_mut(export_id);
-        let slots = vec![mut_export];
-        for (slot, id) in slots.into_iter().zip(wrappers) {
-            slot.item = id.into();
-        }
-
-        let output_bytes = module.emit_wasm();
-        let output_path = [&input_path, ".multivalue.wasm"].concat();
-        fs::write(&output_path, output_bytes).expect(&format!("failed to write `{}`", output_path));
+        mut_export.item = id.into();
     }
+
+    let output_bytes = module.emit_wasm();
+    let output_path = [&input_path, ".multivalue.wasm"].concat();
+    fs::write(&output_path, output_bytes).expect(&format!("failed to write `{}`", output_path));
     Ok(())
 }
